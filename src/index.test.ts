@@ -15,11 +15,6 @@ describe('app', () => {
   const llmProxy = new LlmProxy(appSettings.openaiServer);
 
   describe('Unit', () => {
-    const settings = {
-      baseUrl: '',
-      apiKey: '',
-    };
-
     const apiGatewayRequestContextV2 = {
       accountId: 'acountId',
       apiId: 'apiId',

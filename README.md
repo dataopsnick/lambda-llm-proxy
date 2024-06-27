@@ -1,11 +1,11 @@
 # OpenAI compatible API proxy running on AWS Lambda
 
-This AWS Lambda handler acts a proxy to call a Large Language Model.
+This AWS Lambda handler acts as a proxy to call a Large Language Model.
 
 
-A typical dependency chain looks like
+## Architecture
 
-`Typescript openAI client` => `API Gateway` => `Lambda openAI proxy` => `OpenAI server`
+![OpenAI proxy](ArchitectureOpenAIProxy.png)
 
 The benefits of inserting a proxy between the frontend and the model inference service include
 
@@ -47,7 +47,7 @@ template.yaml
   OPENAI_SERVER_KEY: pb_0123456789
 ```
 
-Above `OPENAI_SERVER_URL` uses predibase endpoint, but OpenAI, Mistral, or Ollama urls should work.
+Above `OPENAI_SERVER_URL` uses predibase endpoint, but OpenAI, Mistral, or Ollama urls should also work.
 
 ### Test
 
