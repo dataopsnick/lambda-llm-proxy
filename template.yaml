@@ -1,0 +1,60 @@
+# This AWS SAM template has been generated from your function's configuration. If
+# your function has one or more triggers, note that the AWS resources associated
+# with these triggers aren't fully specified in this template and include
+# placeholder values. Open this template in AWS Application Composer or your
+# favorite IDE and modify it to specify a serverless application with other AWS
+# resources.
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: OpenAI compatible API proxy running on AWS Lambda
+Resources:
+  openaiProxy:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist
+      Description: 'OpenAI compatible API proxy running on AWS Lambda'
+      MemorySize: 128
+      Timeout: 120
+      Handler: index.handler
+      Runtime: nodejs20.x
+      EphemeralStorage:
+        Size: 512
+      EventInvokeConfig:
+        MaximumEventAgeInSeconds: 21600
+        MaximumRetryAttempts: 2
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins:
+            - '*'
+          AllowHeaders:
+            - authorization
+            - content-type
+          AllowMethods:
+            - POST
+            - GET
+          AllowCredentials: true
+          MaxAge: 0
+      PackageType: Zip
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+              Resource: arn:aws:logs:us-west-2:0123456789:*
+            - Effect: Allow
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource:
+                - arn:aws:logs:us-west-2:0123456789:log-group:/aws/lambda/openaiProxy:*
+      SnapStart:
+        ApplyOn: None
+      RuntimeManagementConfig:
+        UpdateRuntimeOn: Auto
+      Environment:
+        Variables:
+          OPENAI_PROXY_URL: https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/
+          OPENAI_PROXY_KEY: apiKey
+          OPENAI_SERVER_URL: https://serving.app.predibase.com/0123456789/deployments/v2/llms/mistral-7b-instruct-v0-3/v1
+          OPENAI_SERVER_KEY: pb_ABCDEFGHIJKLMNOPQRSTUVWXYZ
