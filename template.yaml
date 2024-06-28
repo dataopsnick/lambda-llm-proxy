@@ -58,3 +58,4 @@ Resources:
           OPENAI_PROXY_KEY: apiKey
           OPENAI_SERVER_URL: https://serving.app.predibase.com/0123456789/deployments/v2/llms/mistral-7b-instruct-v0-3/v1
           OPENAI_SERVER_KEY: pb_ABCDEFGHIJKLMNOPQRSTUVWXYZ
+          MODEL: ""

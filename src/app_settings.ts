@@ -10,6 +10,6 @@ export const getAppSettings = (): OpenAiProxySettings => {
             baseUrl: process.env.OPENAI_SERVER_URL!,
             apiKey: process.env.OPENAI_SERVER_KEY!,
         },
-        model: '',
+        model: process.env.MODEL!,
     }
 }

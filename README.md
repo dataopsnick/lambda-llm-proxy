@@ -45,9 +45,10 @@ template.yaml
   OPENAI_PROXY_KEY: apiKey
   OPENAI_SERVER_URL: https://serving.app.predibase.com/userId/deployments/v2/llms/mistral-7b-instruct-v0-3/v1
   OPENAI_SERVER_KEY: pb_0123456789
+  MODEL: ""
 ```
 
-Above `OPENAI_SERVER_URL` uses predibase endpoint, but OpenAI, Mistral, or Ollama urls should also work.
+Above `OPENAI_SERVER_URL` uses predibase endpoint, but OpenAI, Mistral, or Ollama urls should also work with parameters from the above table.
 
 ### Test
 
