@@ -24,6 +24,7 @@ Resources:
         MaximumRetryAttempts: 2
       FunctionUrlConfig:
         AuthType: NONE
+        InvokeMode: RESPONSE_STREAM
         Cors:
           AllowOrigins:
             - '*'
@@ -52,10 +53,3 @@ Resources:
         ApplyOn: None
       RuntimeManagementConfig:
         UpdateRuntimeOn: Auto
-      Environment:
-        Variables:
-          OPENAI_PROXY_URL: https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/
-          OPENAI_PROXY_KEY: apiKey
-          OPENAI_SERVER_URL: https://serving.app.predibase.com/0123456789/deployments/v2/llms/mistral-7b-instruct-v0-3/v1
-          OPENAI_SERVER_KEY: pb_ABCDEFGHIJKLMNOPQRSTUVWXYZ
-          MODEL: ""

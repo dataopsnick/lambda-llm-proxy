@@ -1,0 +1,47 @@
+{
+    "version": "2.0",
+    "routeKey": "$default",
+    "rawPath": "/v1/chat/completions",
+    "rawQueryString": "",
+    "headers": {
+        "content-length": "159",
+        "x-amzn-tls-version": "TLSv1.3",
+        "x-forwarded-proto": "https",
+        "x-stainless-package-version": "4.52.1",
+        "x-forwarded-port": "443",
+        "x-forwarded-for": "71.93.45.57",
+        "accept": "application/json",
+        "authorization": "Bearer apiKey",
+        "x-amzn-tls-cipher-suite": "TLS_AES_128_GCM_SHA256",
+        "x-stainless-runtime-version": "v18.19.0",
+        "x-amzn-trace-id": "Root=1-6682df0a-0935f068397b674242e733b4",
+        "x-stainless-runtime": "node",
+        "host": "abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws",
+        "content-type": "application/json",
+        "x-stainless-lang": "js",
+        "accept-encoding": "gzip,deflate",
+        "user-agent": "OpenAI/JS 4.52.1",
+        "x-stainless-arch": "x64",
+        "x-stainless-os": "Linux"
+    },
+    "requestContext": {
+        "accountId": "anonymous",
+        "apiId": "abcdefghijklmnopqrstuvwxyz",
+        "domainName": "abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws",
+        "domainPrefix": "abcdefghijklmnopqrstuvwxyz",
+        "http": {
+            "method": "POST",
+            "path": "/v1/chat/completions",
+            "protocol": "HTTP/1.1",
+            "sourceIp": "71.93.45.57",
+            "userAgent": "OpenAI/JS 4.52.1"
+        },
+        "requestId": "375c0089-2afd-4a3e-8432-b3cb8d2588f4",
+        "routeKey": "$default",
+        "stage": "$default",
+        "time": "01/Jul/2024:16:53:30 +0000",
+        "timeEpoch": 1719852810777
+    },
+    "body": "{\n  \"model\": \"mistral-large-latest\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"What is the capital of Paris?\"\n    }\n  ],\n  \"stream\": true\n}",
+    "isBase64Encoded": false
+}

@@ -18,6 +18,5 @@ module.exports = {
   globals: {
     awslambda: awslambda
   },
-  testTimeout: 120000,
-  setupFiles: ['<rootDir>/setEnvVars.ts'],
+  testTimeout: 60000,
 };

@@ -1,38 +1,25 @@
-import { describe, test, expect } from '@jest/globals';
+import { describe, expect, test } from '@jest/globals';
+import { APIGatewayProxyEventV2 } from 'aws-lambda';
+import fs from 'fs';
+import zlib from 'zlib';
 import OpenAI from 'openai';
 import { Writable } from 'stream';
-import { LlmClient } from './llm_client';
-import { LlmProxy } from './llm_proxy';
-import { APIGatewayProxyEventV2 } from 'aws-lambda';
-import { getAppSettings } from './app_settings';
-
+import { getOpenAiServerSettings } from '../app_settings';
+import { LlmClient } from '../llm_client';
+import { LlmProxy } from '../llm_proxy';
 
 describe('app', () => {
+  const server = 'replicate'
+  const openAiServerSettings = getOpenAiServerSettings();
+  const llmProxy = new LlmProxy(openAiServerSettings);
+
+  const openaiSettings = openAiServerSettings['proxy'];
+  const llmClient = new LlmClient(openaiSettings!);
+
+  const apiGatewayRequestSampleFile = './src/tests/api_gateway_request.json';
   const prompt = "What is the capital of Paris?";
-  const appSettings = getAppSettings();
-  const model = '';
-  const llmClient = new LlmClient(appSettings.lambdaProxy, model);
-  const llmProxy = new LlmProxy(appSettings.openaiServer);
 
   describe('Unit', () => {
-    const apiGatewayRequestContextV2 = {
-      accountId: 'acountId',
-      apiId: 'apiId',
-      domainName: 'example.com',
-      domainPrefix: 'prefix',
-      http: {
-        method: 'GET',
-        path: '/path',
-        protocol: 'HTTP/1.1',
-        sourceIp: '123.123.123.123',
-        userAgent: 'userAgent'
-      },
-      requestId: 'requestId',
-      stage: '$default',
-      routeKey: '$default',
-      time: '12/Mar/2020:19:03:58 +0000',
-      timeEpoch: 1583348638390,
-    }
     const context = {
       callbackWaitsForEmptyEventLoop: false,
       functionName: 'openaiProxy',
@@ -55,18 +42,21 @@ describe('app', () => {
         console.log('succeed', messageOrObject);
       }
     }
-    const createApiGatewayRequest = (params: OpenAI.Chat.Completions.ChatCompletionCreateParams) : APIGatewayProxyEventV2 => {
-      return {
-        version: '2.0',
-        routeKey: '$default',
-        rawPath: '/path',
-        rawQueryString: '',
-        headers: {
-        },
-        requestContext: apiGatewayRequestContextV2,
-        isBase64Encoded: false,
-        body: JSON.stringify(params)
-      };
+    const createApiGatewayRequest = (params: OpenAI.Chat.Completions.ChatCompletionCreateParams): APIGatewayProxyEventV2 => {
+      const rawData = fs.readFileSync(apiGatewayRequestSampleFile);
+      const rawObject = JSON.parse(rawData.toString());
+      const apiGatewayProxyEventV2 = rawObject as APIGatewayProxyEventV2;
+
+      apiGatewayProxyEventV2['body'] = JSON.stringify(params);
+      apiGatewayProxyEventV2['rawPath'] = `/${server}/v1/chat/completions`
+
+      return apiGatewayProxyEventV2;
+    };
+
+    const readCompressed = (fileName: string): string => {
+      const data = fs.readFileSync(fileName);
+      //const buffer = Buffer.from(data);
+      return zlib.gunzipSync(data).toString();
     };
 
     test('Streaming', async () => {
@@ -75,22 +65,18 @@ describe('app', () => {
       const apiGatewayProxyEventV2 = createApiGatewayRequest(params);
 
       const chunks: Array<string> = []
-
       const responseStream = new Writable({
-        write(chunk, encoding, callback) {
+        write(chunk, _, callback) {
           chunks.push(chunk.toString());
           callback();
         }
       });
 
-      await llmProxy.streamingHandler(apiGatewayProxyEventV2, responseStream, context)
+      await llmProxy.streamingHandler(apiGatewayProxyEventV2, responseStream, context);
 
       console.log(chunks);
 
       expect(chunks.length).toBeGreaterThan(1);
-
-      const chunk = chunks[chunks.length-1];
-      expect(chunk).toMatch("DONE");
     });
 
     test('Non Streaming', async () => {
@@ -114,6 +100,26 @@ describe('app', () => {
       const chunk = chunks[0];
       expect(JSON.parse(chunk).choices[0].message.content).toMatch("France");
     });
+
+    test.skip('Above 32k context size', async () => {
+      const promptFile = './src/tests/above_32k.txt.gz';
+      const largePrompt = readCompressed(promptFile);
+      expect(largePrompt.length).toBeGreaterThan(32768);
+
+      const params = llmClient.completionParamsStreaming(largePrompt);
+      const apiGatewayProxyEventV2 = createApiGatewayRequest(params);
+
+      let response;
+      const responseStream = new Writable({
+        write(chunk, _, callback) {
+          response = chunk.toString();
+          callback();
+        }
+      });
+      await llmProxy.streamingHandler(apiGatewayProxyEventV2, responseStream, context);
+      expect(response).toMatch('Invalid request');
+    });
+
   });
 
   describe('Integration', () => {

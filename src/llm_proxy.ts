@@ -1,66 +1,119 @@
 import { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import OpenAI from 'openai';
-import { Writable } from 'stream';
 import { LlmClient } from './llm_client';
-import { OpenAiSettings } from "./openai_settings";
+import { OpenAiServerSettings } from "./openai_settings";
+import { Writable } from "stream";
+import { APIError } from "openai/error";
+
+export const transformGenerator = async function*<F, T> (iterator: AsyncIterator<F>, transform: (f: F) => T) {
+  while (true) {
+      const next = await iterator.next();
+      if (next.done) { return; }
+      yield transform(next.value);
+  }
+}
+
+const chunkString = (chunkBody: string) : string => {
+  console.log('chunk', chunkBody);
+  return `data: ${chunkBody}\n\n`;
+}
+
+const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk) : string => {
+  const chunkBody = JSON.stringify(chunk);
+  return chunkString(chunkBody);
+}
 
 export class LlmProxy {
-  llmClient: LlmClient;
+  openAiServerSettings: OpenAiServerSettings;
+  llmClients: Map<string, LlmClient> = new Map();
 
-  constructor(settings: OpenAiSettings) {
-    this.llmClient = new LlmClient(settings, '');
+  constructor(openAiServerSettings: OpenAiServerSettings) {
+    this.openAiServerSettings = openAiServerSettings;
   }
 
   streamingHandler = async (
     event: APIGatewayProxyEventV2,
-    responseStream: Writable,
+    writable: Writable,
     _: Context
   ) => {
+    console.log('request', JSON.stringify(event));
     const body = event.body!;
-    console.log('request', body);
+    console.log('body', body);
     const params = JSON.parse(body) as OpenAI.Chat.Completions.ChatCompletionCreateParams;
+
+    const server = this.prefix(event.rawPath)
+    let llmClient;
+
+    try {
+      llmClient = this.getLlmClient(server);
+    } catch (error) {
+      this.addErrorResponse(400, writable);
+      return;
+    }
 
     if (params.stream) {
       let chunkStream;
-
+      
       try {
-        chunkStream = await this.llmClient.createCompletionStreaming(params);
+        chunkStream = await llmClient.createCompletionStreaming(params);
       } catch (error) {
-        console.error(error);
-
-        // change HTTP status to a bad server response
-        const metadata = {
-          statusCode: 500,
-        };
-
-        // @ts-expect-error
-        responseStream = awslambda.HttpResponseStream.from(responseStream, metadata);
-
-        this.writeBody(responseStream, "Something went wrong");
-        responseStream.end();
+        this.handleApiError(error, writable);
         return;
       }
 
-      for await (const chunk of chunkStream) {
-        const chunkStr = JSON.stringify(chunk);
-        this.writeChunk(responseStream, chunkStr);
+      const iterator = chunkStream[Symbol.asyncIterator]();
+      for await (const chunk of transformGenerator(iterator, formatChunk)) {
+        writable.write(chunk);
       }
-      this.writeChunk(responseStream, "[DONE]");
-    } else {
-      const response = await this.llmClient.createCompletionNonStreaming(params);
-      this.writeBody(responseStream, JSON.stringify(response));
-    }
+      writable.write(chunkString('[DONE]'));
+      writable.end();
 
-    responseStream.end();
+    } else {
+      const response = await llmClient.createCompletionNonStreaming(params);
+      writable.write(JSON.stringify(response));
+      writable.end();
+    }
   };
 
-  writeChunk(writable: Writable, chunkStr: string) {
-    writable.write(`data: ${chunkStr}\n\n`);
-    console.log('data', chunkStr);
+  prefix(rawPath: String) : string {
+    return rawPath.split('/')[1];
   }
 
-  writeBody(writable: Writable, body: string) {
-    writable.write(body);
-    console.log('response', body);
+  getLlmClient(server: string) : LlmClient {
+    if (this.llmClients.has(server)) {
+      return this.llmClients.get(server)!;
+    }
+
+    if (!(server in this.openAiServerSettings)) {
+      throw new Error(`No settings for server ${server}`);
+    }
+
+    const settings = this.openAiServerSettings[server];
+    const llmClient = new LlmClient(settings);
+
+    this.llmClients.set(server, llmClient);
+    return llmClient;
+  }
+
+  handleApiError(error: unknown, writable: Writable) {
+    console.log('API error', error);
+    let statusCode = 500;
+    if (error instanceof APIError && error.status) {
+      statusCode = error.status!;
+    }
+
+    this.addErrorResponse(statusCode, writable);
+  }
+
+  addErrorResponse(statusCode: number, writable: Writable) {
+    const metadata = {
+      statusCode: statusCode,
+    };
+
+    // @ts-expect-error
+    writable = awslambda.HttpResponseStream.from(writable, metadata);
+    writable.write('Invalid request');
+
+    writable.end();
   }
 }

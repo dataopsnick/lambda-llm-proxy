@@ -1,10 +1,9 @@
 export interface OpenAiSettings {
-    baseUrl: string;
-    apiKey: string;
+    url: string;
+    token: string;
+    model: string;
 }
 
-export interface OpenAiProxySettings {
-    lambdaProxy: OpenAiSettings;
-    openaiServer: OpenAiSettings;
-    model: string;
+export interface OpenAiServerSettings {
+    [server: string] : OpenAiSettings;
 }

@@ -1,58 +1,57 @@
 import OpenAi from 'openai';
-import { Stream } from 'openai/streaming';
 import { OpenAiSettings } from './openai_settings';
 
 export class LlmClient {
     private openai: OpenAi;
     private model: string;
 
-    constructor(settings: OpenAiSettings, model: string) {
+    constructor(settings: OpenAiSettings) {
         this.openai = this.getClient(settings);
-        this.model = model;
+        this.model = settings.model;
     }
 
-    getClient(settings: OpenAiSettings) : OpenAi {
+    getClient(settings: OpenAiSettings): OpenAi {
         return new OpenAi({
-            baseURL: settings.baseUrl,
-            apiKey: settings.apiKey,
+            baseURL: settings.url,
+            apiKey: settings.token,
         });
     }
 
-    completionParams(model: string, content: string) : any {
+    completionParams(model: string, content: string): any {
         return {
             model: model,
-            messages: [ { role: 'user', content: content } ],
+            messages: [{ role: 'user', content: content }],
         };
     }
 
-    completionParamsStreaming(content: string) : OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming {
+    completionParamsStreaming(content: string): OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming {
         return {
             ...this.completionParams(this.model, content),
             stream: true
         };
     }
 
-    completionParamsNonStreaming(content: string) : OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
+    completionParamsNonStreaming(content: string): OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
         return {
             ...this.completionParams(this.model, content),
         };
     }
 
-    async chatCompletionStreaming(content: string) : Promise<Stream<OpenAi.Chat.Completions.ChatCompletionChunk>> {
+    async chatCompletionStreaming(content: string): Promise<AsyncIterable<OpenAi.Chat.Completions.ChatCompletionChunk>> {
         const params = this.completionParamsStreaming(content);
-        return await this.createCompletionStreaming(params);
+        return this.createCompletionStreaming(params);
     }
 
-    async createCompletionStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming) : Promise<Stream<OpenAi.Chat.Completions.ChatCompletionChunk>> {
+    async createCompletionStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming): Promise<AsyncIterable<OpenAi.Chat.Completions.ChatCompletionChunk>> {
         return await this.openai.chat.completions.create(params);
     }
 
-    async chatCompletionNonStreaming(content: string) : Promise<OpenAi.Chat.Completions.ChatCompletion> {
+    async chatCompletionNonStreaming(content: string): Promise<OpenAi.Chat.Completions.ChatCompletion> {
         const params = this.completionParamsNonStreaming(content);
         return await this.createCompletionNonStreaming(params);
     }
 
-    async createCompletionNonStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming) : Promise<OpenAi.Chat.Completions.ChatCompletion> {
+    async createCompletionNonStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming): Promise<OpenAi.Chat.Completions.ChatCompletion> {
         let response = await this.openai.chat.completions.create(params);
         if (typeof response === 'string' || response instanceof String) {
             let responseStr = response as unknown as string;

@@ -1,0 +1,24 @@
+proxy:
+  url: https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/replicate/v1
+  token: api_key
+  model: mistralai/mistral-7b-instruct-v0.2
+openai:
+  url: https://api.openai.com/v1
+  token: sk-proj-...
+  model: gpt-4o
+mistral:
+  url: https://api.mistral.ai/v1
+  token: ...
+  model: mistral-large-latest
+replicate:
+  url: https://openai-proxy.replicate.com/v1
+  token: r8_...
+  model: mistralai/mistral-7b-instruct-v0.2
+predibase:
+  url: https://serving.app.predibase.com/.../deployments/v2/llms/mistral-7b-instruct-v0-3/v1
+  token: pb_...
+  model: ""
+ollama:
+  url: http://127.0.0.1:11434/v1
+  token: ollama_token
+  model: mistral:latest
