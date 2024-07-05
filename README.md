@@ -15,11 +15,26 @@ The benefits of inserting a proxy between the frontend and the model inference s
 - Metrics
 - Caching
 
-It is a security requirement to distribute your Generative AI app without sharing your access token associated with your LLM provider of choice. After finetuning a base model with Lora, the merged model can be deployed to *replicate.com* or the adapter to *predibase.com*.
+The steps involved in deploying your own LLM include
+
+1. Build a training dataset
+2. Finetune a base LLM with QLora
+3. Evaluate the predictions
+4. Merge the QLora adapter with the base model
+5. Deploy the merged model
+
+Great options facilitate deploying the model. They provide public API endpoints for LLM inference with token-based authentication:
+
+* huggingface.com
+* replicate.com
+* modal.com
+* predibase.com
+
+But you still need a dedicated backend API to hide the token from your client. It is a security requirement to distribute your Generative AI app without sharing your access token associated with your LLM provider of choice.
 
 ### Preferred option
 
-The NodeJS handler runs on a Lambda *streaming* function. Lambda will still buffer response chunks before flushing them to the client. After testing, the intermediate buffering delay was not noticeable when summarizing a large PDF. The app was still reactive with live updates during the sequence generation.
+The NodeJS handler runs on a Lambda *streaming* function. The response it sends is an *Event Stream*, a particular case of *Server Side Events*. Lambda will temporarily buffer messages before flushing them to the client. After testing, the buffering delay was not noticeable when summarizing a large PDF. The app was still reactive with live updates during the sequence generation.
 
 ### Alternatives considered
 
@@ -27,7 +42,7 @@ Introducing websockets or Server Side Events woud also provide instaneous feedba
 
 - Sending notifications to the websocket is possible when running a Lambda function through REST. This would require adding another API Gateway custom API in the stack, as well as managing websocket in the frontend.
 
-- Sending Server Side Events is possible on another AWS compute than Lambda, such as ECS/Fargate. However it would no longer be serverless.
+- Sending live Server Side Events is possible on another AWS compute than Lambda, such as ECS/Fargate. However it would no longer be serverless.
 
 ## Examples
 
@@ -45,7 +60,7 @@ Introducing websockets or Server Side Events woud also provide instaneous feedba
 
 Use the lambda public url as the host in openai client library. Enable authorization before launch.
 
-When calling the proxy, prepend the server key (`openai` | `mistral` | `replicate` | `predibase`) in the path of the url. For example to call `replicate`, the host url is `https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/replicate/v1/chat/completions'`.
+When calling the proxy, prepend the server key (`openai` | `mistral` | `replicate` | `predibase`) in the path of the url. For example to call `replicate`, the host url is `https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/replicate/v1/chat/completions`.
 
 
 ### YAML server configuration
@@ -87,10 +102,10 @@ ENDPOINT=https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/replicat
 API_TOKEN=api_token
 MODEL=meta/meta-llama-3-70b-instruct
 
-curl '$ENDPOINT/chat/completions' \
+curl "$ENDPOINT/chat/completions" \
     -d '{ "model": "$MODEL, "messages": [ { "role": "user", "content": "Tell me a joke" } ], "stream": true }' \
     -H 'Content-Type: application/json' \
-    -H 'Authorization: Bearer $API_TOKEN' \
+    -H "Authorization: Bearer $API_TOKEN" \
 ```
 
 ### NodeJS

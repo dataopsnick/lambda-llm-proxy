@@ -1,24 +1,24 @@
 import { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import OpenAI from 'openai';
+import { APIError } from "openai/error";
+import { Writable } from "stream";
 import { LlmClient } from './llm_client';
 import { OpenAiServerSettings } from "./openai_settings";
-import { Writable } from "stream";
-import { APIError } from "openai/error";
 
-export const transformGenerator = async function*<F, T> (iterator: AsyncIterator<F>, transform: (f: F) => T) {
+export const transformGenerator = async function*<F, T>(iterator: AsyncIterator<F>, transform: (f: F) => T) {
   while (true) {
-      const next = await iterator.next();
-      if (next.done) { return; }
-      yield transform(next.value);
+    const next = await iterator.next();
+    if (next.done) { return; }
+    yield transform(next.value);
   }
 }
 
-const chunkString = (chunkBody: string) : string => {
+const chunkString = (chunkBody: string): string => {
   console.log('chunk', chunkBody);
   return `data: ${chunkBody}\n\n`;
 }
 
-const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk) : string => {
+const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk): string => {
   const chunkBody = JSON.stringify(chunk);
   return chunkString(chunkBody);
 }
@@ -53,13 +53,24 @@ export class LlmProxy {
 
     if (params.stream) {
       let chunkStream;
-      
+
       try {
         chunkStream = await llmClient.createCompletionStreaming(params);
       } catch (error) {
         this.handleApiError(error, writable);
         return;
       }
+
+      // overwrite default Content-Type header, application/octet-stream, to text/event-stream to generate an Event Stream
+      const metadata = {
+        statusCode: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+        },
+      };
+
+      // @ts-expect-error
+      writable = awslambda.HttpResponseStream.from(writable, metadata);
 
       const iterator = chunkStream[Symbol.asyncIterator]();
       for await (const chunk of transformGenerator(iterator, formatChunk)) {
@@ -75,11 +86,11 @@ export class LlmProxy {
     }
   };
 
-  prefix(rawPath: String) : string {
+  prefix(rawPath: String): string {
     return rawPath.split('/')[1];
   }
 
-  getLlmClient(server: string) : LlmClient {
+  getLlmClient(server: string): LlmClient {
     if (this.llmClients.has(server)) {
       return this.llmClients.get(server)!;
     }

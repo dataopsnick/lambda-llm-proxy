@@ -55,7 +55,6 @@ describe('app', () => {
 
     const readCompressed = (fileName: string): string => {
       const data = fs.readFileSync(fileName);
-      //const buffer = Buffer.from(data);
       return zlib.gunzipSync(data).toString();
     };
 
