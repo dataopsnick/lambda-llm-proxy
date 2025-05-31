@@ -1,9 +1,8 @@
-import { getOpenAiServerSettings } from './app_settings';
+import { getAllServerSettings } from './app_settings';
 import { LlmProxy } from './llm_proxy';
 
-const appSettings = getOpenAiServerSettings();
+const appSettings = getAllServerSettings();
 
 export const llmProxy = new LlmProxy(appSettings)
 
-// @ts-expect-error
 export const handler = awslambda.streamifyResponse(llmProxy.streamingHandler)

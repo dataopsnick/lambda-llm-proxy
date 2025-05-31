@@ -1,54 +1,103 @@
 import OpenAi from 'openai';
 import { OpenAiSettings } from './openai_settings';
+import { GeminiSettings } from './gemini_settings';
+import { GoogleGenerativeAI, GenerativeModel } from "@google/genai"; // esbuild will mark this as external
+import { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions';
+import { ReadableStream as PolyfillReadableStream } from 'web-streams-polyfill'; // Corrected path
+import { TextEncoder, TextDecoder } from 'util';
+
+// Use native ReadableStream if available, otherwise use the polyfill
+const ReadableStream = globalThis.ReadableStream || PolyfillReadableStream;
 
 export class LlmClient {
-    private openai: OpenAi;
-    private model: string;
+    public openai: OpenAi | null;
+    public gemini: GoogleGenerativeAI | null;
+    public model: string;
+    public openaiSettings: OpenAiSettings | null;
+    public geminiSettings: GeminiSettings | null;
 
-    constructor(settings: OpenAiSettings) {
-        this.openai = this.getClient(settings);
+
+    constructor(settings: OpenAiSettings | GeminiSettings) {
+        if ('url' in settings) {
+            // It's OpenAiSettings
+            this.openaiSettings = settings;
+            this.geminiSettings = null;
+            this.openai = new OpenAi({
+                baseURL: settings.url,
+                apiKey: settings.token,
+            });
+            this.gemini = null;
+        } else {
+            // It's GeminiSettings
+            this.geminiSettings = settings;
+            this.openaiSettings = null;
+            this.gemini = new GoogleGenerativeAI({ apiKey: settings.token });
+            this.openai = null;
+        }
+
         this.model = settings.model;
     }
 
-    getClient(settings: OpenAiSettings): OpenAi {
-        return new OpenAi({
-            baseURL: settings.url,
-            apiKey: settings.token,
-        });
-    }
-
-    completionParams(model: string, content: string): any {
+    private completionParams(model: string, content: string): any {
         return {
             model: model,
             messages: [{ role: 'user', content: content }],
         };
     }
 
-    completionParamsStreaming(content: string): OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming {
-        return {
-            ...this.completionParams(this.model, content),
-            stream: true
-        };
+    async chatCompletionStreaming(content: string): Promise<any> {
+        if (this.openai) {
+            const params: ChatCompletionCreateParams = {
+                model: this.model,
+                messages: [{ role: 'user', content: content }],
+                stream: true
+            };
+            const resp = await this.openai.chat.completions.create(params);
+            return resp.toReadableStream() as any;
+        } else if (this.gemini) {
+            const model: GenerativeModel = this.gemini.getGenerativeModel({ model: this.model });
+            const chat = model.startChat({
+                history: [], // IMPORTANT: Add history here later
+            });
+
+            const result = await chat.sendMessageStream({ message: content }); // Mimic example
+
+            return result.stream as any;
+        } else {
+            throw new Error(`Unsupported provider`);
+        }
     }
 
-    completionParamsNonStreaming(content: string): OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
-        return {
-            ...this.completionParams(this.model, content),
-        };
+    async createCompletionStreaming(params: any): Promise<any | null> {
+        try {
+            const resp = await this.openai?.chat.completions.create(params);
+            if (!resp) {
+                return null;
+            }
+            return new ReadableStream({
+                async start(controller: any) {
+                    if (resp.choices) {
+                        for await (const chunk of resp) {
+                            if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) {
+                                controller.enqueue(new TextEncoder().encode(chunk.choices[0].delta.content));
+                            }
+                        }
+                    }
+                    controller.close();
+                }
+            });
+        } catch (error) {
+            console.error("Error in createCompletionStreaming:", error);
+            return null;
+        }
     }
 
-    async chatCompletionStreaming(content: string): Promise<AsyncIterable<OpenAi.Chat.Completions.ChatCompletionChunk>> {
-        const params = this.completionParamsStreaming(content);
-        return this.createCompletionStreaming(params);
-    }
-
-    async createCompletionStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsStreaming): Promise<AsyncIterable<OpenAi.Chat.Completions.ChatCompletionChunk>> {
-        return await this.openai.chat.completions.create(params);
-    }
-
-    async chatCompletionNonStreaming(content: string): Promise<OpenAi.Chat.Completions.ChatCompletion> {
-        const params = this.completionParamsNonStreaming(content);
-        return await this.createCompletionNonStreaming(params);
+    async chatCompletionNonStreaming(content: string): Promise<ChatCompletion> {
+        if (this.openai) {
+          const params = this.completionParams(this.model, content);
+          return await this.openai.chat.completions.create(params) as ChatCompletion;
+        }
+        throw new Error("Not implemented");
     }
 
     async createCompletionNonStreaming(params: OpenAi.Chat.Completions.ChatCompletionCreateParamsNonStreaming): Promise<OpenAi.Chat.Completions.ChatCompletion> {
