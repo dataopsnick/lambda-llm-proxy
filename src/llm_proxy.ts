@@ -19,7 +19,6 @@ const chunkString = (chunkBody: string): string => {
   return `data: ${chunkBody}\n\n`;
 }
 
-// Updated formatChunk to properly handle Gemini responses
 const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk | any): string => {
   // Handle OpenAI format (passthrough)
   if (chunk && chunk.choices && Array.isArray(chunk.choices)) {
@@ -33,7 +32,6 @@ const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk | any): 
     if (candidate && candidate.content && candidate.content.parts && candidate.content.parts[0]) {
       const text = candidate.content.parts[0].text || '';
       
-      // Convert to OpenAI format
       const openaiChunk = {
         id: chunk.responseId || 'chatcmpl-gemini',
         object: 'chat.completion.chunk',
@@ -73,7 +71,6 @@ const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk | any): 
     return chunkString(chunkBody);
   }
   
-  // Fallback for unknown format
   console.warn('Unknown chunk format:', chunk);
   return chunkString(JSON.stringify({ 
     choices: [{ 
@@ -99,73 +96,200 @@ export class LlmProxy {
     console.log('request', JSON.stringify(event));
     const body = event.body!;
     console.log('body', body);
-    const params = JSON.parse(body) as OpenAI.Chat.Completions.ChatCompletionCreateParams;
 
-    const server = this.prefix(event.rawPath)
+    // Parse the request path to determine the action
+    const pathParts = event.rawPath.split('/');
+    const server = pathParts[1];
+    const action = pathParts[2]; // 'v1' for chat, 'conversation' for conversation management
+
     let llmClient;
-
     try {
       llmClient = this.getLlmClient(server);
     } catch (error) {
-      this.addErrorResponse(400, writable);
+      this.addErrorResponse(400, writable, `Server ${server} not configured`);
       return;
     }
 
-    const content = params.messages && params.messages.length > 0 ? params.messages[params.messages.length -1].content : "";
-    if (typeof content !== 'string') {
+    // Handle conversation management endpoints
+    if (action === 'conversation') {
+      return this.handleConversationManagement(event, writable, llmClient);
+    }
+
+    // Handle regular chat completions
+    if (action === 'v1' && pathParts[3] === 'chat' && pathParts[4] === 'completions') {
+      return this.handleChatCompletion(event, writable, llmClient);
+    }
+
+    this.addErrorResponse(404, writable, 'Endpoint not found');
+  };
+
+  private handleConversationManagement = async (
+    event: APIGatewayProxyEventV2,
+    writable: Writable,
+    llmClient: LlmClient
+  ) => {
+    const pathParts = event.rawPath.split('/');
+    const operation = pathParts[3]; // load, clear, status
+
+    const metadata = {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    };
+
+    writable = awslambda.HttpResponseStream.from(writable, metadata);
+
+    try {
+      const body = event.body ? JSON.parse(event.body) : {};
+
+      switch (operation) {
+        case 'load':
+          // Load conversation from file
+          const filePath = body.filePath || './conversations/default.json';
+          llmClient.loadConversationHistory(filePath);
+          writable.write(JSON.stringify({
+            success: true,
+            message: `Conversation loaded from ${filePath}`,
+            historyLength: llmClient.getHistory().length
+          }));
+          break;
+
+        case 'clear':
+          // Clear conversation history
+          llmClient.clearHistory();
+          writable.write(JSON.stringify({
+            success: true,
+            message: 'Conversation history cleared'
+          }));
+          break;
+
+        case 'status':
+          // Get conversation status
+          const history = llmClient.getHistory();
+          writable.write(JSON.stringify({
+            success: true,
+            historyLength: history.length,
+            lastMessages: history.slice(-3) // Last 3 messages for preview
+          }));
+          break;
+
+        case 'add':
+          // Add message to history
+          const { role, content } = body;
+          if (!role || !content) {
+            throw new Error('Role and content are required');
+          }
+          llmClient.addToHistory(role, content);
+          writable.write(JSON.stringify({
+            success: true,
+            message: 'Message added to history',
+            historyLength: llmClient.getHistory().length
+          }));
+          break;
+
+        default:
+          throw new Error(`Unknown conversation operation: ${operation}`);
+      }
+    } catch (error) {
+      writable.write(JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }));
+    }
+
+    writable.end();
+  };
+
+  private handleChatCompletion = async (
+    event: APIGatewayProxyEventV2,
+    writable: Writable,
+    llmClient: LlmClient
+  ) => {
+    const body = JSON.parse(event.body!);
+    const params = body as OpenAI.Chat.Completions.ChatCompletionCreateParams;
+
+    // Extract messages - support both single message and full conversation
+    let messages: Array<{role: string, content: string}>;
+    
+    if (params.messages && Array.isArray(params.messages)) {
+      // Full conversation provided
+      messages = params.messages.filter(msg => 
+        typeof msg.content === 'string'
+      ).map(msg => ({
+        role: msg.role,
+        content: msg.content as string
+      }));
+      console.log(`[CHAT] Processing ${messages.length} messages`);
+    } else {
+      // Legacy: extract last message only
+      const lastMessage = params.messages?.[params.messages.length - 1];
+      if (!lastMessage || typeof lastMessage.content !== 'string') {
         this.addErrorResponse(400, writable, "Invalid message content");
         return;
+      }
+      messages = [{
+        role: lastMessage.role,
+        content: lastMessage.content
+      }];
+      console.log(`[CHAT] Processing single message (legacy mode)`);
     }
 
     if (params.stream) {
-      let chunkStream;
+      await this.handleStreamingResponse(params, messages, writable, llmClient);
+    } else {
+      await this.handleNonStreamingResponse(messages, writable, llmClient);
+    }
+  };
 
-      try {
-        chunkStream = await llmClient.chatCompletionStreaming(content as string);
-      } catch (error) {
-        this.handleApiError(error, writable);
-        return;
-      }
+  private handleStreamingResponse = async (
+    params: any,
+    messages: Array<{role: string, content: string}>,
+    writable: Writable,
+    llmClient: LlmClient
+  ) => {
+    let chunkStream;
 
-      const metadata = {
-        statusCode: 200,
-        headers: {
-          "Content-Type": "text/event-stream",
-        },
-      };
+    try {
+      chunkStream = await llmClient.chatCompletionStreaming(messages);
+    } catch (error) {
+      this.handleApiError(error, writable);
+      return;
+    }
 
-      writable = awslambda.HttpResponseStream.from(writable, metadata);
+    const metadata = {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+      },
+    };
 
-      // Handle different stream types
+    writable = awslambda.HttpResponseStream.from(writable, metadata);
+
+    try {
       if (llmClient.gemini) {
-        // Gemini stream - need to extract text from complex objects
+        // Gemini stream processing
         console.log('Processing Gemini stream');
-        try {
-          for await (const chunk of chunkStream) {
-            console.log('Raw Gemini chunk:', JSON.stringify(chunk, null, 2));
-            
-            // The chunk from Gemini has a text() method
-            if (chunk && typeof chunk.text === 'function') {
-              try {
-                const text = chunk.text();
-                if (text) {
-                  const formattedChunk = formatChunk(text);
-                  writable.write(formattedChunk);
-                }
-              } catch (textError) {
-                console.error('Error extracting text from Gemini chunk:', textError);
+        for await (const chunk of chunkStream) {
+          console.log('Raw Gemini chunk:', JSON.stringify(chunk, null, 2));
+          
+          if (chunk && typeof chunk.text === 'function') {
+            try {
+              const text = chunk.text();
+              if (text) {
+                const formattedChunk = formatChunk(text);
+                writable.write(formattedChunk);
               }
-            } else if (chunk && chunk.candidates) {
-              // Direct Gemini response object
-              const formattedChunk = formatChunk(chunk);
-              writable.write(formattedChunk);
+            } catch (textError) {
+              console.error('Error extracting text from Gemini chunk:', textError);
             }
+          } else if (chunk && chunk.candidates) {
+            const formattedChunk = formatChunk(chunk);
+            writable.write(formattedChunk);
           }
-        } catch (streamError) {
-          console.error('Error processing Gemini stream:', streamError);
         }
       } else {
-        // OpenAI stream - process normally
+        // OpenAI stream processing
         console.log('Processing OpenAI stream');
         const iterator = chunkStream[Symbol.asyncIterator]();
         for await (const chunk of transformGenerator(iterator, formatChunk)) {
@@ -174,13 +298,22 @@ export class LlmProxy {
       }
       
       writable.write(chunkString('[DONE]'));
-      writable.end();
+    } catch (streamError) {
+      console.error('Error processing stream:', streamError);
+    }
+    
+    writable.end();
+  };
 
-    } else {
-      // Non-streaming
-      const response = await llmClient.chatCompletionNonStreaming(content as string);
+  private handleNonStreamingResponse = async (
+    messages: Array<{role: string, content: string}>,
+    writable: Writable,
+    llmClient: LlmClient
+  ) => {
+    try {
+      const response = await llmClient.chatCompletionNonStreaming(messages);
       
-      // Convert Gemini non-streaming response to OpenAI format if needed
+      // Convert Gemini response to OpenAI format if needed
       if (typeof response === 'string' && llmClient.gemini) {
         const openaiResponse = {
           id: 'chatcmpl-gemini',
@@ -205,13 +338,13 @@ export class LlmProxy {
       } else {
         writable.write(JSON.stringify(response));
       }
-      writable.end();
+    } catch (error) {
+      this.handleApiError(error, writable);
+      return;
     }
+    
+    writable.end();
   };
-
-  prefix(rawPath: String): string {
-    return rawPath.split('/')[1];
-  }
 
   getLlmClient(server: string): LlmClient {
     if (this.llmClients.has(server)) {
@@ -246,7 +379,6 @@ export class LlmProxy {
 
     writable = awslambda.HttpResponseStream.from(writable, metadata);
     writable.write(message);
-
     writable.end();
   }
 }
