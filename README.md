@@ -146,6 +146,10 @@ for await (const chunk of chunks) {
 Works in Google Colab
 
 ```Python
+## uncomment for Google Colab
+#!pip install anyio
+#!pip install openai
+
 from anyio import run
 from openai import AsyncOpenAI
 
@@ -210,6 +214,7 @@ Include the configuration file containing the api tokens of the supported LLM se
 
 ```
 $ npm run build
+$ cp -R node_modules dist/ 
 $ cp openai_servers.yaml dist/
 ```
 
