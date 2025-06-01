@@ -10,12 +10,7 @@ export const transformGenerator = async function*<F, T>(iterator: AsyncIterator<
   while (true) {
     const next = await iterator.next();
     if (next.done) { return; }
-    // Check what the shape of 'next.value' is, and adapt the transform function accordingly
-    if (typeof next.value === 'string') { // Assuming Gemini stream chunks are strings
-        yield transform(next.value as F); // Or handle specific Gemini chunk structure
-    } else { // Assuming OpenAI chunk structure
-        yield transform(next.value);
-    }
+    yield transform(next.value);
   }
 }
 
@@ -24,19 +19,72 @@ const chunkString = (chunkBody: string): string => {
   return `data: ${chunkBody}\n\n`;
 }
 
-const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk | string): string => {
-  if (typeof chunk === 'string') {
-    // For Gemini, assuming the chunk is already the text or needs minimal processing
-    // This might need adjustment based on actual Gemini chunk structure
-    return chunkString(JSON.stringify({ choices: [{ delta: { content: chunk } }] }));
+// Updated formatChunk to properly handle Gemini responses
+const formatChunk = (chunk: OpenAI.Chat.Completions.ChatCompletionChunk | any): string => {
+  // Handle OpenAI format (passthrough)
+  if (chunk && chunk.choices && Array.isArray(chunk.choices)) {
+    const chunkBody = JSON.stringify(chunk);
+    return chunkString(chunkBody);
   }
-  // For OpenAI
-  const chunkBody = JSON.stringify(chunk);
-  return chunkString(chunkBody);
+  
+  // Handle Gemini format - convert to OpenAI format
+  if (chunk && chunk.candidates && Array.isArray(chunk.candidates)) {
+    const candidate = chunk.candidates[0];
+    if (candidate && candidate.content && candidate.content.parts && candidate.content.parts[0]) {
+      const text = candidate.content.parts[0].text || '';
+      
+      // Convert to OpenAI format
+      const openaiChunk = {
+        id: chunk.responseId || 'chatcmpl-gemini',
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: 'gemini-2.0-flash',
+        choices: [{
+          index: 0,
+          delta: {
+            content: text
+          },
+          finish_reason: candidate.finishReason === 'STOP' ? 'stop' : null
+        }]
+      };
+      
+      const chunkBody = JSON.stringify(openaiChunk);
+      return chunkString(chunkBody);
+    }
+  }
+  
+  // Handle raw text (fallback)
+  if (typeof chunk === 'string') {
+    const openaiChunk = {
+      id: 'chatcmpl-gemini',
+      object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000),
+      model: 'gemini-2.0-flash',
+      choices: [{
+        index: 0,
+        delta: {
+          content: chunk
+        },
+        finish_reason: null
+      }]
+    };
+    
+    const chunkBody = JSON.stringify(openaiChunk);
+    return chunkString(chunkBody);
+  }
+  
+  // Fallback for unknown format
+  console.warn('Unknown chunk format:', chunk);
+  return chunkString(JSON.stringify({ 
+    choices: [{ 
+      delta: { content: '' },
+      finish_reason: null 
+    }] 
+  }));
 }
 
 export class LlmProxy {
-  serverSettings: OpenAiServerSettings | Record<string, GeminiSettings>; // Updated to handle both
+  serverSettings: OpenAiServerSettings | Record<string, GeminiSettings>;
   llmClients: Map<string, LlmClient> = new Map();
 
   constructor(serverSettings: OpenAiServerSettings | Record<string, GeminiSettings>) {
@@ -51,7 +99,7 @@ export class LlmProxy {
     console.log('request', JSON.stringify(event));
     const body = event.body!;
     console.log('body', body);
-    const params = JSON.parse(body) as OpenAI.Chat.Completions.ChatCompletionCreateParams; // This might need to be more generic or checked
+    const params = JSON.parse(body) as OpenAI.Chat.Completions.ChatCompletionCreateParams;
 
     const server = this.prefix(event.rawPath)
     let llmClient;
@@ -69,12 +117,10 @@ export class LlmProxy {
         return;
     }
 
-
     if (params.stream) {
       let chunkStream;
 
       try {
-        // Use the unified chatCompletionStreaming method
         chunkStream = await llmClient.chatCompletionStreaming(content as string);
       } catch (error) {
         this.handleApiError(error, writable);
@@ -90,17 +136,75 @@ export class LlmProxy {
 
       writable = awslambda.HttpResponseStream.from(writable, metadata);
 
-      const iterator = chunkStream[Symbol.asyncIterator]();
-      for await (const chunk of transformGenerator(iterator, formatChunk)) {
-        writable.write(chunk);
+      // Handle different stream types
+      if (llmClient.gemini) {
+        // Gemini stream - need to extract text from complex objects
+        console.log('Processing Gemini stream');
+        try {
+          for await (const chunk of chunkStream) {
+            console.log('Raw Gemini chunk:', JSON.stringify(chunk, null, 2));
+            
+            // The chunk from Gemini has a text() method
+            if (chunk && typeof chunk.text === 'function') {
+              try {
+                const text = chunk.text();
+                if (text) {
+                  const formattedChunk = formatChunk(text);
+                  writable.write(formattedChunk);
+                }
+              } catch (textError) {
+                console.error('Error extracting text from Gemini chunk:', textError);
+              }
+            } else if (chunk && chunk.candidates) {
+              // Direct Gemini response object
+              const formattedChunk = formatChunk(chunk);
+              writable.write(formattedChunk);
+            }
+          }
+        } catch (streamError) {
+          console.error('Error processing Gemini stream:', streamError);
+        }
+      } else {
+        // OpenAI stream - process normally
+        console.log('Processing OpenAI stream');
+        const iterator = chunkStream[Symbol.asyncIterator]();
+        for await (const chunk of transformGenerator(iterator, formatChunk)) {
+          writable.write(chunk);
+        }
       }
+      
       writable.write(chunkString('[DONE]'));
       writable.end();
 
     } else {
-      // Non-streaming - this part might need adjustment if Gemini non-streaming is different
+      // Non-streaming
       const response = await llmClient.chatCompletionNonStreaming(content as string);
-      writable.write(JSON.stringify(response));
+      
+      // Convert Gemini non-streaming response to OpenAI format if needed
+      if (typeof response === 'string' && llmClient.gemini) {
+        const openaiResponse = {
+          id: 'chatcmpl-gemini',
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model: llmClient.model,
+          choices: [{
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: response
+            },
+            finish_reason: 'stop'
+          }],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0
+          }
+        };
+        writable.write(JSON.stringify(openaiResponse));
+      } else {
+        writable.write(JSON.stringify(response));
+      }
       writable.end();
     }
   };
@@ -118,7 +222,7 @@ export class LlmProxy {
       throw new Error(`No settings for server ${server}`);
     }
 
-    const settings = this.serverSettings[server] as OpenAiSettings | GeminiSettings; // Type assertion
+    const settings = this.serverSettings[server] as OpenAiSettings | GeminiSettings;
     const llmClient = new LlmClient(settings);
 
     this.llmClients.set(server, llmClient);

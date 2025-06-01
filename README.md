@@ -141,6 +141,51 @@ for await (const chunk of chunks) {
 
 ```
 
+### Python
+
+Works in Google Colab
+
+```Python
+from anyio import run
+from openai import AsyncOpenAI
+
+# Configuration
+server = 'gemini'
+base_url = f'https://abcdefghijklmnopqrstuvwxyz.lambda-url.us-west-2.on.aws/{server}/v1/'
+api_key = 'GEMINI_API_KEY'  # Use the same token as in your YAML
+
+# Create OpenAI client
+openai = AsyncOpenAI(
+    base_url=base_url,
+    api_key=api_key,
+)
+
+async def main():
+    model = 'gemini-2.0-flash'
+    prompt = 'Tell me a joke.'
+
+    params = {
+        'model': model,
+        'messages': [{'role': 'user', 'content': prompt}],
+        'stream': True,
+    }
+
+    # Create streaming chat completion
+    chunks = await openai.chat.completions.create(**params)
+    response = ''
+
+    # Iterate through streaming chunks
+    async for chunk in chunks:
+        if chunk.choices and chunk.choices[0].delta.content:
+            content = chunk.choices[0].delta.content
+            response += content
+            print(content, end='', flush=True)
+
+    print(f"\n\nFull response: {response}")
+
+# Run the async function
+await main()```
+
 ### Test
 
 ```
